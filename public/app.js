@@ -77,9 +77,7 @@ function renderResults(data) {
   }
 
   resultsEl.appendChild(renderFliesSection('Likely hatches', data.likelyHatches, renderHatchItem));
-  resultsEl.appendChild(renderRecommendationsSection(sortByRank(data.recommendations)));
-  resultsEl.appendChild(renderFliesSection('Consider adding to your box', data.missingPatterns, renderMissingItem));
-  resultsEl.appendChild(renderIdealFlyBoxSection(sortByRank(data.recommendations), data.missingPatterns));
+  resultsEl.appendChild(renderRecommendationsSection(buildRecommendationRows(sortByRank(data.recommendations), data.missingPatterns)));
   resultsEl.appendChild(renderFliesSection('Other flies in your box', data.otherFlies, renderFlyItem));
 
   resultsEl.classList.remove('hidden');
@@ -144,6 +142,7 @@ function renderFlyItem(fly) {
   if (fly.colorNotes) metaParts.push(fly.colorNotes);
   if (typeof fly.confidence === 'number') metaParts.push(`Confidence: ${Math.round(fly.confidence * 100)}%`);
   if (metaParts.length) body.appendChild(el('div', 'item-meta', escapeHtml(metaParts.join(' \u2022 '))));
+  if (fly.usageNotes) body.appendChild(el('div', 'item-reason', `\ud83d\udca1 ${escapeHtml(fly.usageNotes)}`));
   li.appendChild(body);
 
   return li;
@@ -164,82 +163,30 @@ function renderHatchItem(hatch) {
   return li;
 }
 
-function renderMissingItem(pattern) {
-  const li = el('li', 'item-card fly-item-card');
-  li.appendChild(renderReferenceMedia(pattern));
+function buildRecommendationRows(recommendations, missingPatterns) {
+  const recRows = (Array.isArray(recommendations) ? recommendations : []).map((rec) => ({
+    flyName: rec.flyName,
+    reason: rec.reason,
+    sizeHint: rec.sizeHint,
+    inBox: rec.inBox,
+    rank: rec.rank,
+    referenceImageUrl: rec.referenceImageUrl,
+    referenceImageSourceUrl: rec.referenceImageSourceUrl,
+    referenceImageSearchUrl: rec.referenceImageSearchUrl,
+  }));
 
-  const body = el('div', 'fly-item-body');
-  body.appendChild(el('div', 'item-title', escapeHtml(pattern.name || 'Unknown pattern')));
-  if (pattern.reason) body.appendChild(el('div', 'item-reason', escapeHtml(pattern.reason)));
-  li.appendChild(body);
+  const addRows = (Array.isArray(missingPatterns) ? missingPatterns : []).map((pattern) => ({
+    flyName: pattern.name,
+    reason: pattern.reason,
+    sizeHint: null,
+    inBox: false,
+    rank: null,
+    referenceImageUrl: pattern.referenceImageUrl,
+    referenceImageSourceUrl: pattern.referenceImageSourceUrl,
+    referenceImageSearchUrl: pattern.referenceImageSearchUrl,
+  }));
 
-  return li;
-}
-
-function renderIdealFlyBoxSection(recommendations, missingPatterns) {
-  const section = el('section', 'results-section');
-  section.appendChild(el('h2', null, 'The ideal fly box'));
-
-  const items = [
-    ...(Array.isArray(recommendations)
-      ? recommendations.map((rec) => ({
-          name: rec.flyName,
-          referenceImageUrl: rec.referenceImageUrl,
-          referenceImageSourceUrl: rec.referenceImageSourceUrl,
-          referenceImageSearchUrl: rec.referenceImageSearchUrl,
-          tag: 'have',
-        }))
-      : []),
-    ...(Array.isArray(missingPatterns)
-      ? missingPatterns.map((pattern) => ({
-          name: pattern.name,
-          referenceImageUrl: pattern.referenceImageUrl,
-          referenceImageSourceUrl: pattern.referenceImageSourceUrl,
-          referenceImageSearchUrl: pattern.referenceImageSearchUrl,
-          tag: 'add',
-        }))
-      : []),
-  ];
-
-  if (items.length === 0) {
-    section.appendChild(el('p', 'weather-note', 'Nothing to show here.'));
-    return section;
-  }
-
-  const box = el('div', 'fly-box-illustration');
-  const lid = el('div', 'fly-box-lid');
-  lid.appendChild(el('span', 'fly-box-latch'));
-  box.appendChild(lid);
-
-  const slots = el('div', 'fly-box-slots');
-  items.forEach((item) => slots.appendChild(renderFlyBoxSlot(item)));
-  box.appendChild(slots);
-
-  section.appendChild(box);
-  return section;
-}
-
-function renderFlyBoxSlot(item) {
-  const slot = el('div', 'fly-box-slot');
-
-  const media = el('div', 'fly-box-slot-media');
-  if (item.referenceImageUrl) {
-    const img = el('img', 'fly-reference-img');
-    img.src = item.referenceImageUrl;
-    img.alt = escapeHtml(item.name || 'fly');
-    img.loading = 'lazy';
-    media.appendChild(img);
-  } else {
-    media.appendChild(el('span', 'fly-box-slot-icon', '\ud83e\udeb0'));
-  }
-  slot.appendChild(media);
-
-  slot.appendChild(el('div', 'fly-box-slot-label', escapeHtml(item.name || 'Unknown fly')));
-  slot.appendChild(
-    el('span', `badge fly-box-slot-badge ${item.tag === 'add' ? 'no-badge' : 'yes-badge'}`, item.tag === 'add' ? 'Add' : 'Have')
-  );
-
-  return slot;
+  return [...recRows, ...addRows];
 }
 
 function renderRecommendationsSection(recommendations) {

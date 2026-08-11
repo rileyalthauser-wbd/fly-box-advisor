@@ -145,8 +145,12 @@ const RESULT_JSON_SCHEMA = {
           sizeHint: { type: 'string' },
           colorNotes: { type: 'string' },
           confidence: { type: 'number' },
+          usageNotes: {
+            type: 'string',
+            description: 'One sentence on the season, water type, time of day, or weather where this specific pattern is generally most effective on this river - useful even when the fly is not the top pick for the current trip.',
+          },
         },
-        required: ['name', 'type'],
+        required: ['name', 'type', 'usageNotes'],
       },
     },
     likelyHatches: {
@@ -231,7 +235,8 @@ Tasks:
 2. Reason about the aquatic and terrestrial insect hatches that are typically active on this river/region for this date, season, time of day, and weather.
 3. Recommend which of the identified flies the angler should use, ranked 1 (best) upward, with reasons grounded in the likely hatches and conditions. Reference flyName values that match entries from step 1.
 4. Note any well-known patterns for this hatch that the angler appears to be missing from their box.
-5. Write a short 2-4 sentence natural-language summary for the angler.`;
+5. For every fly identified in step 1, including ones not recommended for this trip, give a short one-sentence usage note on the season, water type, time of day, or weather where that specific pattern is typically most effective on this type of river.
+6. Write a short 2-4 sentence natural-language summary for the angler.`;
 
   const body = {
     model: GEMINI_MODEL,
