@@ -6,7 +6,7 @@ const multer = require('multer');
 
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -130,28 +130,79 @@ function summarizeDaily(data, note) {
   };
 }
 
-const RESULT_SHAPE_INSTRUCTIONS = `
-Respond with ONLY a JSON object (no markdown, no code fences) with exactly this shape:
-{
-  "identifiedFlies": [
-    { "name": string, "type": "dry" | "nymph" | "emerger" | "streamer" | "wet" | "terrestrial" | "other", "sizeHint": string, "colorNotes": string, "confidence": number between 0 and 1 }
-  ],
-  "likelyHatches": [
-    { "insect": string, "lifecycleStage": string, "reason": string }
-  ],
-  "recommendations": [
-    { "flyName": string, "rank": number, "reason": string }
-  ],
-  "missingPatterns": [
-    { "name": string, "reason": string }
-  ],
-  "summary": string
+// JSON schema enforced via Gemini's response_format, so the model's output
+// is guaranteed to parse - no more fragile "please only output JSON" prompting.
+const RESULT_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    identifiedFlies: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          type: { type: 'string', description: 'dry, nymph, emerger, streamer, wet, terrestrial, or other' },
+          sizeHint: { type: 'string' },
+          colorNotes: { type: 'string' },
+          confidence: { type: 'number' },
+        },
+        required: ['name', 'type'],
+      },
+    },
+    likelyHatches: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          insect: { type: 'string' },
+          lifecycleStage: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['insect', 'reason'],
+      },
+    },
+    recommendations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          flyName: { type: 'string' },
+          rank: { type: 'number' },
+          reason: { type: 'string' },
+        },
+        required: ['flyName', 'reason'],
+      },
+    },
+    missingPatterns: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['name', 'reason'],
+      },
+    },
+    summary: { type: 'string' },
+  },
+  required: ['identifiedFlies', 'likelyHatches', 'recommendations', 'missingPatterns', 'summary'],
+};
+
+function extractOutputText(interaction) {
+  const steps = (interaction && interaction.steps) || [];
+  const texts = [];
+  for (const step of steps) {
+    if (step.type === 'model_output' && Array.isArray(step.content)) {
+      for (const part of step.content) {
+        if (part.type === 'text' && typeof part.text === 'string') {
+          texts.push(part.text);
+        }
+      }
+    }
+  }
+  return texts.join('');
 }
-- "identifiedFlies" should list every distinguishable fly you can see in the photo, giving your best guess at the common pattern name (e.g. "Elk Hair Caddis", "Pheasant Tail Nymph", "Woolly Bugger") even if you're not fully certain.
-- "recommendations" should reference flyName values that match (or closely match) entries in identifiedFlies, ranked 1 (best) upward, with the reason tied to the likely hatches/conditions.
-- "missingPatterns" should suggest patterns that would help given the likely hatches but were NOT spotted in the photo.
-- "summary" is a short 2-4 sentence natural-language takeaway for the angler.
-`;
 
 async function analyzeWithGemini({ imageBase64, mimeType, river, locationInfo, date, timeOfDay, weather }) {
   if (!GEMINI_API_KEY) {
@@ -176,32 +227,31 @@ Trip context:
 ${contextLines}
 
 Tasks:
-1. Identify each distinct fly visible in the photo.
+1. Identify each distinct fly visible in the photo, giving your best guess at the common pattern name (e.g. "Elk Hair Caddis", "Pheasant Tail Nymph", "Woolly Bugger") even if you're not fully certain.
 2. Reason about the aquatic and terrestrial insect hatches that are typically active on this river/region for this date, season, time of day, and weather.
-3. Recommend which of the identified flies the angler should use, ranked, with reasons grounded in the likely hatches and conditions.
+3. Recommend which of the identified flies the angler should use, ranked 1 (best) upward, with reasons grounded in the likely hatches and conditions. Reference flyName values that match entries from step 1.
 4. Note any well-known patterns for this hatch that the angler appears to be missing from their box.
-
-${RESULT_SHAPE_INSTRUCTIONS}`;
+5. Write a short 2-4 sentence natural-language summary for the angler.`;
 
   const body = {
-    contents: [
-      {
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: mimeType, data: imageBase64 } },
-        ],
-      },
+    model: GEMINI_MODEL,
+    input: [
+      { type: 'text', text: prompt },
+      { type: 'image', data: imageBase64, mime_type: mimeType },
     ],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      temperature: 0.4,
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: RESULT_JSON_SCHEMA,
     },
   };
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-  const res = await fetch(url, {
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': GEMINI_API_KEY,
+    },
     body: JSON.stringify(body),
   });
 
@@ -211,9 +261,7 @@ ${RESULT_SHAPE_INSTRUCTIONS}`;
   }
 
   const data = await res.json();
-  const content = data.candidates && data.candidates[0] && data.candidates[0].content
-    && data.candidates[0].content.parts && data.candidates[0].content.parts[0]
-    && data.candidates[0].content.parts[0].text;
+  const content = extractOutputText(data);
   if (!content) {
     throw new Error('Gemini response did not contain any content.');
   }
