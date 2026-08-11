@@ -297,58 +297,189 @@ Tasks:
   }
 }
 
-// Best-effort real reference photo for a named fly pattern, so the angler can
-// visually compare it against what's in their box. Wikimedia Commons is free,
-// keyless, and has decent coverage of classic/well-known fly patterns. When it
-// doesn't have a match, we fall back to a search-engine link instead of an
-// inline image.
+// Best-effort real reference photo for a fly pattern or insect, so the angler
+// can visually compare it against what's in their box or what's hatching.
+// Tries Wikipedia first (usually a clean, highly relevant lead photo for
+// well-known patterns/insects), then falls back to a Wikimedia Commons
+// full-text image search, both free and keyless. Wikimedia asks API clients
+// to identify themselves, and will otherwise start rate-limiting requests.
+const WIKIMEDIA_USER_AGENT =
+  'FlyBoxAdvisor/1.0 (https://github.com/rileyalthauser-wbd/fly-box-advisor; prototype fly-fishing helper app)';
+
+function wikimediaFetch(url) {
+  return fetch(url, { headers: { 'User-Agent': WIKIMEDIA_USER_AGENT } });
+}
+
+function normalizeWords(str) {
+  return (str || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+}
+
+// Loose full-text search (both Wikipedia's opensearch and Commons') can
+// return confidently wrong results for short/common names - e.g. "Adams"
+// matching the photographer Ansel Adams, or "Trico" matching "Tricon
+// Garage". Require every word of the fly/insect name to appear as a whole
+// word in the candidate title before trusting its photo.
+function looksLikeSameSubject(name, title) {
+  const nameWords = normalizeWords(name);
+  const titleWords = new Set(normalizeWords(title));
+  if (!nameWords.length) return false;
+  return nameWords.every((word) => titleWords.has(word));
+}
+
+async function findWikipediaTitleCandidates(query) {
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=opensearch&format=json&search=${encodeURIComponent(query)}&limit=5&namespace=0&origin=*`;
+    const res = await wikimediaFetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data && data[1]) || [];
+  } catch (err) {
+    console.error(`Wikipedia title search failed for "${query}":`, err.message);
+    return [];
+  }
+}
+
+async function fetchWikipediaThumbnails(titles) {
+  if (!titles.length) return {};
+  try {
+    const url = `https://en.wikipedia.org/w/api.php?action=query&format=json&titles=${encodeURIComponent(
+      titles.join('|')
+    )}&prop=pageimages&piprop=thumbnail&pithumbsize=320&redirects=1&origin=*`;
+    const res = await wikimediaFetch(url);
+    if (!res.ok) return {};
+    const data = await res.json();
+    const pages = (data && data.query && data.query.pages) || {};
+    const byTitle = {};
+    Object.values(pages).forEach((page) => {
+      if (page.thumbnail && page.thumbnail.source) byTitle[page.title] = page.thumbnail.source;
+    });
+    // Follow redirects (e.g. "Adams fly" -> "Adams Fly") back to the title we
+    // actually asked about.
+    const redirects = (data && data.query && data.query.redirects) || [];
+    redirects.forEach((redirect) => {
+      if (byTitle[redirect.to] && !byTitle[redirect.from]) byTitle[redirect.from] = byTitle[redirect.to];
+    });
+    return byTitle;
+  } catch (err) {
+    console.error('Wikipedia thumbnail lookup failed:', err.message);
+    return {};
+  }
+}
+
+async function fetchWikipediaImage(name, searchQuery) {
+  const candidates = await findWikipediaTitleCandidates(searchQuery);
+  const plausible = candidates.filter((title) => looksLikeSameSubject(name, title));
+  if (!plausible.length) return null;
+
+  const thumbsByTitle = await fetchWikipediaThumbnails(plausible);
+  for (const title of plausible) {
+    if (thumbsByTitle[title]) {
+      return {
+        imageUrl: thumbsByTitle[title],
+        sourceUrl: `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`,
+      };
+    }
+  }
+  return null;
+}
+
+async function fetchCommonsImage(name, query) {
+  try {
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=8&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=300&origin=*`;
+    const res = await wikimediaFetch(url);
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const pages = data && data.query && data.query.pages;
+    if (!pages) return null;
+
+    // Commons full-text search often surfaces scanned PDF books (old fishing
+    // manuals, magazines, etc.) that happen to mention the name, or images of
+    // an unrelated subject that just shares a word - require both an actual
+    // photo/image file and a title that plausibly matches the subject.
+    const candidates = Object.values(pages);
+    const match = candidates.find((page) => {
+      const info = page.imageinfo && page.imageinfo[0];
+      const isImage = info && typeof info.mime === 'string' && info.mime.startsWith('image/');
+      return isImage && looksLikeSameSubject(name, page.title || '');
+    });
+    const info = match && match.imageinfo && match.imageinfo[0];
+    if (!info) return null;
+
+    return {
+      imageUrl: info.thumburl || info.url || null,
+      sourceUrl: info.descriptionurl || info.url || null,
+    };
+  } catch (err) {
+    console.error(`Commons image lookup failed for "${query}":`, err.message);
+    return null;
+  }
+}
+
 async function fetchReferenceImage(flyName) {
   const searchUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(`${flyName} fly fishing pattern`)}`;
   if (!flyName || !flyName.trim()) {
     return { imageUrl: null, sourceUrl: null, searchUrl };
   }
 
-  try {
-    const query = `${flyName} fly fishing`;
-    const url = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=5&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=300&origin=*`;
-    const res = await fetch(url);
-    if (!res.ok) return { imageUrl: null, sourceUrl: null, searchUrl };
+  // Appending "fly" nudges Wikipedia's title search toward the fly pattern
+  // rather than an unrelated same-named subject (e.g. plain "Adams" would
+  // otherwise favor the photographer Ansel Adams).
+  const wiki = await fetchWikipediaImage(flyName, `${flyName} fly`);
+  if (wiki) return { imageUrl: wiki.imageUrl, sourceUrl: wiki.sourceUrl, searchUrl };
 
-    const data = await res.json();
-    const pages = data && data.query && data.query.pages;
-    if (!pages) return { imageUrl: null, sourceUrl: null, searchUrl };
+  const commons = await fetchCommonsImage(flyName, `${flyName} fly fishing`);
+  if (commons) return { imageUrl: commons.imageUrl, sourceUrl: commons.sourceUrl, searchUrl };
 
-    // Commons full-text search often surfaces scanned PDF books (old fishing
-    // manuals, magazines, etc.) that happen to mention the fly name - skip
-    // anything that isn't an actual photo/image file.
-    const candidates = Object.values(pages);
-    const match = candidates.find((page) => {
-      const info = page.imageinfo && page.imageinfo[0];
-      return info && typeof info.mime === 'string' && info.mime.startsWith('image/');
-    });
-    const info = match && match.imageinfo && match.imageinfo[0];
-    if (!info) return { imageUrl: null, sourceUrl: null, searchUrl };
+  return { imageUrl: null, sourceUrl: null, searchUrl };
+}
 
-    return {
-      imageUrl: info.thumburl || info.url || null,
-      sourceUrl: info.descriptionurl || info.url || null,
-      searchUrl,
-    };
-  } catch (err) {
-    console.error(`Reference image lookup failed for "${flyName}":`, err.message);
+async function fetchInsectReferenceImage(insectName) {
+  const searchUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(`${insectName} insect`)}`;
+  if (!insectName || !insectName.trim()) {
     return { imageUrl: null, sourceUrl: null, searchUrl };
   }
+
+  const wiki = await fetchWikipediaImage(insectName, insectName);
+  if (wiki) return { imageUrl: wiki.imageUrl, sourceUrl: wiki.sourceUrl, searchUrl };
+
+  const commons = await fetchCommonsImage(insectName, `${insectName} insect`);
+  if (commons) return { imageUrl: commons.imageUrl, sourceUrl: commons.sourceUrl, searchUrl };
+
+  return { imageUrl: null, sourceUrl: null, searchUrl };
+}
+
+// Reference-image lookups make a few sequential Wikimedia requests each, so
+// running a whole box's worth at once could look like a burst to their API
+// and get rate-limited. Cap how many run concurrently instead.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await fn(items[index], index);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
 }
 
 async function attachReferenceImages(identifiedFlies) {
   if (!Array.isArray(identifiedFlies)) return identifiedFlies;
-  const withImages = await Promise.all(
-    identifiedFlies.map(async (fly) => {
-      const ref = await fetchReferenceImage(fly.name);
-      return { ...fly, referenceImageUrl: ref.imageUrl, referenceImageSourceUrl: ref.sourceUrl, referenceImageSearchUrl: ref.searchUrl };
-    })
-  );
-  return withImages;
+  return mapWithConcurrency(identifiedFlies, 4, async (fly) => {
+    const ref = await fetchReferenceImage(fly.name);
+    return { ...fly, referenceImageUrl: ref.imageUrl, referenceImageSourceUrl: ref.sourceUrl, referenceImageSearchUrl: ref.searchUrl };
+  });
 }
 
 // Fuzzy name matching so "Elk Hair Caddis" (from recommendations) lines up
@@ -371,62 +502,56 @@ function findMatchingFly(name, flies) {
 
 async function enrichRecommendations(recommendations, identifiedFlies) {
   if (!Array.isArray(recommendations)) return recommendations;
-  return Promise.all(
-    recommendations.map(async (rec) => {
-      const matched = findMatchingFly(rec.flyName, identifiedFlies);
-      if (matched) {
-        return {
-          ...rec,
-          inBox: true,
-          sizeHint: matched.sizeHint || null,
-          colorNotes: matched.colorNotes || null,
-          referenceImageUrl: matched.referenceImageUrl || null,
-          referenceImageSourceUrl: matched.referenceImageSourceUrl || null,
-          referenceImageSearchUrl: matched.referenceImageSearchUrl || null,
-        };
-      }
-      const ref = await fetchReferenceImage(rec.flyName);
+  return mapWithConcurrency(recommendations, 4, async (rec) => {
+    const matched = findMatchingFly(rec.flyName, identifiedFlies);
+    if (matched) {
       return {
         ...rec,
-        inBox: false,
-        sizeHint: rec.sizeHint || null,
-        colorNotes: null,
-        referenceImageUrl: ref.imageUrl,
-        referenceImageSourceUrl: ref.sourceUrl,
-        referenceImageSearchUrl: ref.searchUrl,
+        inBox: true,
+        sizeHint: matched.sizeHint || null,
+        colorNotes: matched.colorNotes || null,
+        referenceImageUrl: matched.referenceImageUrl || null,
+        referenceImageSourceUrl: matched.referenceImageSourceUrl || null,
+        referenceImageSearchUrl: matched.referenceImageSearchUrl || null,
       };
-    })
-  );
+    }
+    const ref = await fetchReferenceImage(rec.flyName);
+    return {
+      ...rec,
+      inBox: false,
+      sizeHint: rec.sizeHint || null,
+      colorNotes: null,
+      referenceImageUrl: ref.imageUrl,
+      referenceImageSourceUrl: ref.sourceUrl,
+      referenceImageSearchUrl: ref.searchUrl,
+    };
+  });
 }
 
 async function enrichMissingPatterns(missingPatterns) {
   if (!Array.isArray(missingPatterns)) return missingPatterns;
-  return Promise.all(
-    missingPatterns.map(async (pattern) => {
-      const ref = await fetchReferenceImage(pattern.name);
-      return {
-        ...pattern,
-        referenceImageUrl: ref.imageUrl,
-        referenceImageSourceUrl: ref.sourceUrl,
-        referenceImageSearchUrl: ref.searchUrl,
-      };
-    })
-  );
+  return mapWithConcurrency(missingPatterns, 4, async (pattern) => {
+    const ref = await fetchReferenceImage(pattern.name);
+    return {
+      ...pattern,
+      referenceImageUrl: ref.imageUrl,
+      referenceImageSourceUrl: ref.sourceUrl,
+      referenceImageSearchUrl: ref.searchUrl,
+    };
+  });
 }
 
 async function enrichHatches(likelyHatches) {
   if (!Array.isArray(likelyHatches)) return likelyHatches;
-  return Promise.all(
-    likelyHatches.map(async (hatch) => {
-      const ref = await fetchReferenceImage(hatch.insect);
-      return {
-        ...hatch,
-        referenceImageUrl: ref.imageUrl,
-        referenceImageSourceUrl: ref.sourceUrl,
-        referenceImageSearchUrl: ref.searchUrl,
-      };
-    })
-  );
+  return mapWithConcurrency(likelyHatches, 4, async (hatch) => {
+    const ref = await fetchInsectReferenceImage(hatch.insect);
+    return {
+      ...hatch,
+      referenceImageUrl: ref.imageUrl,
+      referenceImageSourceUrl: ref.sourceUrl,
+      referenceImageSearchUrl: ref.searchUrl,
+    };
+  });
 }
 
 // Flies the angler owns that weren't specifically called out as a top
