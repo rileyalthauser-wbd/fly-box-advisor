@@ -11,6 +11,7 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---- Helpers ---------------------------------------------------------------
@@ -64,6 +65,116 @@ async function geocodeLocation(query) {
   } catch (err) {
     console.error('Geocoding failed:', err.message);
     return { resolved: false };
+  }
+}
+
+// Zippopotam.us is free, keyless, and covers US zip codes well - good enough
+// for a "find a river near me" starting point without needing a geocoding
+// API key or the visitor's IP address.
+async function geocodeZip(zip) {
+  const cleaned = String(zip || '').trim();
+  if (!/^\d{5}$/.test(cleaned)) return null;
+
+  try {
+    const res = await fetch(`https://api.zippopotam.us/us/${cleaned}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const place = data && data.places && data.places[0];
+    if (!place) return null;
+    return {
+      latitude: parseFloat(place.latitude),
+      longitude: parseFloat(place.longitude),
+      name: [place['place name'], place['state abbreviation']].filter(Boolean).join(', '),
+    };
+  } catch (err) {
+    console.error(`Zip geocode failed for "${zip}":`, err.message);
+    return null;
+  }
+}
+
+// BigDataCloud's client reverse-geocode endpoint is free and keyless - used
+// to turn a browser geolocation lat/lon into a friendly place name.
+async function reverseGeocode(latitude, longitude) {
+  try {
+    const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const place = data.city || data.locality;
+    const region = data.principalSubdivision;
+    return [place, region].filter(Boolean).join(', ') || null;
+  } catch (err) {
+    console.error('Reverse geocode failed:', err.message);
+    return null;
+  }
+}
+
+const NEARBY_RIVERS_SCHEMA = {
+  type: 'object',
+  properties: {
+    rivers: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          distanceMiles: { type: 'number' },
+          nearestTown: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['name', 'distanceMiles', 'nearestTown', 'reason'],
+      },
+    },
+  },
+  required: ['rivers'],
+};
+
+async function findNearbyRivers({ latitude, longitude, name }) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not set. Add it to your .env file.');
+  }
+
+  const prompt = `You are an expert fly fishing guide with broad geographic knowledge of rivers across the country.
+
+Location: latitude ${latitude}, longitude ${longitude}${name ? ` (near ${name})` : ''}.
+
+List up to 5 real, well-known rivers or river sections within about 100 miles of this location that are good for fly fishing, ordered nearest first. For each, estimate the distance in miles from this location, name the nearest town or landmark, and give a one-sentence reason it's recommended (notable species, hatch reputation, access, etc). Only include real rivers you're confident about - if you can't confidently think of any within 100 miles, return fewer than 5, or an empty list, rather than inventing one.`;
+
+  const body = {
+    model: GEMINI_MODEL,
+    input: [{ type: 'text', text: prompt }],
+    response_format: {
+      type: 'text',
+      mime_type: 'application/json',
+      schema: NEARBY_RIVERS_SCHEMA,
+    },
+  };
+
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': GEMINI_API_KEY,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini API error ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  const content = extractOutputText(data);
+  if (!content) {
+    throw new Error('Gemini response did not contain any content.');
+  }
+
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed.rivers) ? parsed.rivers.slice(0, 5) : [];
+  } catch (err) {
+    throw new Error(`Failed to parse Gemini JSON response: ${err.message}`);
   }
 }
 
@@ -607,6 +718,31 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
   } catch (err) {
     console.error('Analyze failed:', err);
     res.status(500).json({ error: err.message || 'Something went wrong analyzing your flies.' });
+  }
+});
+
+app.post('/api/nearby-rivers', async (req, res) => {
+  try {
+    const { zip, latitude, longitude } = req.body || {};
+
+    let location = null;
+    if (typeof latitude === 'number' && typeof longitude === 'number') {
+      const placeName = await reverseGeocode(latitude, longitude);
+      location = { latitude, longitude, name: placeName };
+    } else if (zip) {
+      location = await geocodeZip(zip);
+      if (!location) {
+        return res.status(400).json({ error: "Couldn't find that zip code. Please double-check it and try again." });
+      }
+    } else {
+      return res.status(400).json({ error: 'Provide a zip code or allow location access.' });
+    }
+
+    const rivers = await findNearbyRivers(location);
+    res.json({ resolvedLocationName: location.name || null, rivers });
+  } catch (err) {
+    console.error('Nearby rivers lookup failed:', err);
+    res.status(500).json({ error: err.message || 'Something went wrong finding nearby rivers.' });
   }
 });
 

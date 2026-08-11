@@ -9,6 +9,15 @@ const submitBtn = document.getElementById('submit-btn');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 
+const riverInput = document.getElementById('river');
+const findRiverToggle = document.getElementById('find-river-toggle');
+const riverFinder = document.getElementById('river-finder');
+const useLocationBtn = document.getElementById('use-location-btn');
+const zipInput = document.getElementById('zip-input');
+const zipSearchBtn = document.getElementById('zip-search-btn');
+const riverFinderStatus = document.getElementById('river-finder-status');
+const riverResults = document.getElementById('river-results');
+
 const MODE_COPY = {
   analyze: {
     hint: 'Upload a photo of your fly box to see what you have and what to use.',
@@ -60,6 +69,151 @@ photoInput.addEventListener('change', () => {
     photoPreview.classList.remove('hidden');
   };
   reader.readAsDataURL(file);
+});
+
+findRiverToggle.addEventListener('click', () => {
+  riverFinder.classList.toggle('hidden');
+});
+
+function setRiverFinderStatus(message, isError) {
+  if (!message) {
+    riverFinderStatus.classList.add('hidden');
+    riverFinderStatus.textContent = '';
+    return;
+  }
+  riverFinderStatus.textContent = message;
+  riverFinderStatus.classList.remove('hidden');
+  riverFinderStatus.classList.toggle('error', Boolean(isError));
+}
+
+async function searchNearbyRivers(payload) {
+  riverResults.classList.add('hidden');
+  riverResults.innerHTML = '';
+  useLocationBtn.disabled = true;
+  zipSearchBtn.disabled = true;
+  setRiverFinderStatus('Searching for nearby rivers... this can take a moment.');
+
+  try {
+    const res = await fetch('/api/nearby-rivers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Something went wrong finding nearby rivers.');
+    }
+
+    renderRiverResults(data.rivers, data.resolvedLocationName);
+  } catch (err) {
+    setRiverFinderStatus(err.message || 'Something went wrong finding nearby rivers.', true);
+  } finally {
+    useLocationBtn.disabled = false;
+    zipSearchBtn.disabled = false;
+  }
+}
+
+function renderRiverResults(rivers, locationName) {
+  if (!Array.isArray(rivers) || rivers.length === 0) {
+    setRiverFinderStatus(
+      locationName
+        ? `Couldn't find a well-known fly fishing river within 100 miles of ${locationName}.`
+        : "Couldn't find a well-known fly fishing river nearby."
+    );
+    return;
+  }
+
+  setRiverFinderStatus(locationName ? `Rivers near ${locationName} - tap one to use it:` : 'Tap a river to use it:');
+
+  riverResults.innerHTML = '';
+  rivers.forEach((river) => {
+    const li = document.createElement('li');
+    li.className = 'river-result';
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+
+    const title = document.createElement('div');
+    title.className = 'river-result-title';
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = river.name || 'Unknown river';
+    title.appendChild(nameSpan);
+    if (typeof river.distanceMiles === 'number') {
+      const distanceSpan = document.createElement('span');
+      distanceSpan.className = 'badge river-distance-badge';
+      distanceSpan.textContent = `${Math.round(river.distanceMiles)} mi`;
+      title.appendChild(distanceSpan);
+    }
+    li.appendChild(title);
+
+    if (river.nearestTown) {
+      const town = document.createElement('div');
+      town.className = 'river-result-meta';
+      town.textContent = `Near ${river.nearestTown}`;
+      li.appendChild(town);
+    }
+
+    if (river.reason) {
+      const reason = document.createElement('div');
+      reason.className = 'river-result-reason';
+      reason.textContent = river.reason;
+      li.appendChild(reason);
+    }
+
+    const chooseRiver = () => {
+      riverInput.value = river.nearestTown ? `${river.name}, near ${river.nearestTown}` : river.name;
+      riverFinder.classList.add('hidden');
+      riverInput.focus();
+    };
+    li.addEventListener('click', chooseRiver);
+    li.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        chooseRiver();
+      }
+    });
+
+    riverResults.appendChild(li);
+  });
+  riverResults.classList.remove('hidden');
+}
+
+useLocationBtn.addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    setRiverFinderStatus('Location access is not supported in this browser - try a ZIP code instead.', true);
+    return;
+  }
+
+  setRiverFinderStatus('Requesting your location...');
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      searchNearbyRivers({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      });
+    },
+    () => {
+      setRiverFinderStatus("Couldn't access your location - try a ZIP code instead.", true);
+    },
+    { timeout: 10000 }
+  );
+});
+
+function submitZipSearch() {
+  const zip = zipInput.value.trim();
+  if (!/^\d{5}$/.test(zip)) {
+    setRiverFinderStatus('Enter a valid 5-digit ZIP code.', true);
+    return;
+  }
+  searchNearbyRivers({ zip });
+}
+
+zipSearchBtn.addEventListener('click', submitZipSearch);
+zipInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    submitZipSearch();
+  }
 });
 
 form.addEventListener('submit', async (e) => {
