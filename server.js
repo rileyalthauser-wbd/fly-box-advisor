@@ -5,8 +5,8 @@ const express = require('express');
 const multer = require('multer');
 
 const PORT = process.env.PORT || 3000;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -153,9 +153,9 @@ Respond with ONLY a JSON object (no markdown, no code fences) with exactly this 
 - "summary" is a short 2-4 sentence natural-language takeaway for the angler.
 `;
 
-async function analyzeWithOpenAI({ imageBase64, mimeType, river, locationInfo, date, timeOfDay, weather }) {
-  if (!OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is not set. Add it to your .env file.');
+async function analyzeWithGemini({ imageBase64, mimeType, river, locationInfo, date, timeOfDay, weather }) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not set. Add it to your .env file.');
   }
 
   const contextLines = [
@@ -184,44 +184,44 @@ Tasks:
 ${RESULT_SHAPE_INSTRUCTIONS}`;
 
   const body = {
-    model: OPENAI_MODEL,
-    messages: [
+    contents: [
       {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: mimeType, data: imageBase64 } },
         ],
       },
     ],
-    response_format: { type: 'json_object' },
-    temperature: 0.4,
+    generationConfig: {
+      responseMimeType: 'application/json',
+      temperature: 0.4,
+    },
   };
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`OpenAI API error ${res.status}: ${errText}`);
+    throw new Error(`Gemini API error ${res.status}: ${errText}`);
   }
 
   const data = await res.json();
-  const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  const content = data.candidates && data.candidates[0] && data.candidates[0].content
+    && data.candidates[0].content.parts && data.candidates[0].content.parts[0]
+    && data.candidates[0].content.parts[0].text;
   if (!content) {
-    throw new Error('OpenAI response did not contain any content.');
+    throw new Error('Gemini response did not contain any content.');
   }
 
   try {
     return JSON.parse(content);
   } catch (err) {
-    throw new Error(`Failed to parse OpenAI JSON response: ${err.message}`);
+    throw new Error(`Failed to parse Gemini JSON response: ${err.message}`);
   }
 }
 
@@ -241,7 +241,7 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
     const weather = await fetchWeather(locationInfo, date);
 
     const imageBase64 = req.file.buffer.toString('base64');
-    const analysis = await analyzeWithOpenAI({
+    const analysis = await analyzeWithGemini({
       imageBase64,
       mimeType: req.file.mimetype,
       river,
@@ -265,7 +265,7 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Fly Box Advisor running at http://localhost:${PORT}`);
-  if (!OPENAI_API_KEY) {
-    console.warn('WARNING: OPENAI_API_KEY is not set. Requests to /api/analyze will fail until you add one to .env.');
+  if (!GEMINI_API_KEY) {
+    console.warn('WARNING: GEMINI_API_KEY is not set. Requests to /api/analyze will fail until you add one to .env.');
   }
 });

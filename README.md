@@ -13,8 +13,9 @@ visit is a fresh session: nothing is saved between requests.
 2. The server geocodes the river/location text (via the free Open-Meteo geocoding API) and fetches
    weather for that date/location (forecast for near-term dates, historical archive for past dates,
    or a "same date last year" estimate for dates too far out to forecast).
-3. The photo plus all of that context is sent to OpenAI in a single request, which identifies the
-   flies in the photo and reasons about likely hatches to produce ranked recommendations.
+3. The photo plus all of that context is sent to Google's Gemini API in a single request, which
+   identifies the flies in the photo and reasons about likely hatches to produce ranked
+   recommendations.
 4. Results are rendered in the browser: identified flies, likely hatches, ranked recommendations,
    and patterns you might be missing.
 
@@ -26,14 +27,15 @@ visit is a fresh session: nothing is saved between requests.
    npm install
    ```
 
-2. Copy `.env.example` to `.env` and add your OpenAI API key:
+2. Copy `.env.example` to `.env` and add your Gemini API key:
 
    ```bash
    cp .env.example .env
    ```
 
-   Then edit `.env` and set `OPENAI_API_KEY=sk-...`. You can also change `OPENAI_MODEL` if you'd
-   like to use a different vision-capable model (default is `gpt-4o`).
+   Get a free API key at [Google AI Studio](https://aistudio.google.com/apikey), then edit `.env`
+   and set `GEMINI_API_KEY=...`. You can also change `GEMINI_MODEL` if you'd like to use a
+   different vision-capable Gemini model (default is `gemini-2.5-flash`).
 
 3. Start the server:
 
