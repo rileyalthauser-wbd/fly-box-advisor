@@ -142,17 +142,41 @@ function renderFliesSection(title, items, itemRenderer) {
 }
 
 function renderFlyItem(fly) {
-  const li = el('li', 'item-card');
+  const li = el('li', 'item-card fly-item-card');
+
+  const media = el('div', 'fly-item-media');
+  if (fly.referenceImageUrl) {
+    const link = el('a', null);
+    link.href = fly.referenceImageSourceUrl || fly.referenceImageUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    const img = el('img', 'fly-reference-img');
+    img.src = fly.referenceImageUrl;
+    img.alt = `Reference photo of ${fly.name || 'fly'}`;
+    img.loading = 'lazy';
+    link.appendChild(img);
+    media.appendChild(link);
+  } else if (fly.referenceImageSearchUrl) {
+    const link = el('a', 'reference-search-link', '\ud83d\udd0d Search photos');
+    link.href = fly.referenceImageSearchUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    media.appendChild(link);
+  }
+  li.appendChild(media);
+
+  const body = el('div', 'fly-item-body');
   const title = el('div', 'item-title');
   title.appendChild(el('span', null, escapeHtml(fly.name || 'Unknown fly')));
   if (fly.type) title.appendChild(el('span', 'badge', escapeHtml(fly.type)));
-  li.appendChild(title);
+  body.appendChild(title);
 
   const metaParts = [];
   if (fly.sizeHint) metaParts.push(`Size: ${fly.sizeHint}`);
   if (fly.colorNotes) metaParts.push(fly.colorNotes);
   if (typeof fly.confidence === 'number') metaParts.push(`Confidence: ${Math.round(fly.confidence * 100)}%`);
-  if (metaParts.length) li.appendChild(el('div', 'item-meta', escapeHtml(metaParts.join(' \u2022 '))));
+  if (metaParts.length) body.appendChild(el('div', 'item-meta', escapeHtml(metaParts.join(' \u2022 '))));
+  li.appendChild(body);
 
   return li;
 }

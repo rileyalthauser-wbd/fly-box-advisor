@@ -273,6 +273,60 @@ Tasks:
   }
 }
 
+// Best-effort real reference photo for a named fly pattern, so the angler can
+// visually compare it against what's in their box. Wikimedia Commons is free,
+// keyless, and has decent coverage of classic/well-known fly patterns. When it
+// doesn't have a match, we fall back to a search-engine link instead of an
+// inline image.
+async function fetchReferenceImage(flyName) {
+  const searchUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(`${flyName} fly fishing pattern`)}`;
+  if (!flyName || !flyName.trim()) {
+    return { imageUrl: null, sourceUrl: null, searchUrl };
+  }
+
+  try {
+    const query = `${flyName} fly fishing`;
+    const url = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=5&gsrnamespace=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=300&origin=*`;
+    const res = await fetch(url);
+    if (!res.ok) return { imageUrl: null, sourceUrl: null, searchUrl };
+
+    const data = await res.json();
+    const pages = data && data.query && data.query.pages;
+    if (!pages) return { imageUrl: null, sourceUrl: null, searchUrl };
+
+    // Commons full-text search often surfaces scanned PDF books (old fishing
+    // manuals, magazines, etc.) that happen to mention the fly name - skip
+    // anything that isn't an actual photo/image file.
+    const candidates = Object.values(pages);
+    const match = candidates.find((page) => {
+      const info = page.imageinfo && page.imageinfo[0];
+      return info && typeof info.mime === 'string' && info.mime.startsWith('image/');
+    });
+    const info = match && match.imageinfo && match.imageinfo[0];
+    if (!info) return { imageUrl: null, sourceUrl: null, searchUrl };
+
+    return {
+      imageUrl: info.thumburl || info.url || null,
+      sourceUrl: info.descriptionurl || info.url || null,
+      searchUrl,
+    };
+  } catch (err) {
+    console.error(`Reference image lookup failed for "${flyName}":`, err.message);
+    return { imageUrl: null, sourceUrl: null, searchUrl };
+  }
+}
+
+async function attachReferenceImages(identifiedFlies) {
+  if (!Array.isArray(identifiedFlies)) return identifiedFlies;
+  const withImages = await Promise.all(
+    identifiedFlies.map(async (fly) => {
+      const ref = await fetchReferenceImage(fly.name);
+      return { ...fly, referenceImageUrl: ref.imageUrl, referenceImageSourceUrl: ref.sourceUrl, referenceImageSearchUrl: ref.searchUrl };
+    })
+  );
+  return withImages;
+}
+
 // ---- Routes -----------------------------------------------------------------
 
 app.post('/api/analyze', upload.single('image'), async (req, res) => {
@@ -298,6 +352,8 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
       timeOfDay,
       weather,
     });
+
+    analysis.identifiedFlies = await attachReferenceImages(analysis.identifiedFlies);
 
     res.json({
       locationResolved: locationInfo.resolved,
