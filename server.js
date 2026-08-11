@@ -173,8 +173,9 @@ const RESULT_JSON_SCHEMA = {
           flyName: { type: 'string' },
           rank: { type: 'number' },
           reason: { type: 'string' },
+          sizeHint: { type: 'string', description: 'Typical hook size for this pattern, e.g. "#14-16". Always fill this in.' },
         },
-        required: ['flyName', 'reason'],
+        required: ['flyName', 'reason', 'sizeHint'],
       },
     },
     missingPatterns: {
@@ -184,8 +185,9 @@ const RESULT_JSON_SCHEMA = {
         properties: {
           name: { type: 'string' },
           reason: { type: 'string' },
+          sizeHint: { type: 'string', description: 'Typical hook size for this pattern, e.g. "#14-16". Always fill this in.' },
         },
-        required: ['name', 'reason'],
+        required: ['name', 'reason', 'sizeHint'],
       },
     },
     summary: { type: 'string' },
@@ -213,6 +215,8 @@ async function analyzeWithGemini({ imageBase64, mimeType, river, locationInfo, d
     throw new Error('GEMINI_API_KEY is not set. Add it to your .env file.');
   }
 
+  const hasPhoto = Boolean(imageBase64);
+
   const contextLines = [
     `River/location as entered by angler: ${river}`,
     locationInfo.resolved
@@ -225,7 +229,8 @@ async function analyzeWithGemini({ imageBase64, mimeType, river, locationInfo, d
       : `Weather: unavailable (${weather.note}). Reason using typical seasonal conditions for this location and date instead.`,
   ].join('\n');
 
-  const prompt = `You are an expert fly fishing guide and aquatic entomologist. A photo of an angler's fly box is attached.
+  const prompt = hasPhoto
+    ? `You are an expert fly fishing guide and aquatic entomologist. A photo of an angler's fly box is attached.
 
 Trip context:
 ${contextLines}
@@ -233,17 +238,31 @@ ${contextLines}
 Tasks:
 1. Identify each distinct fly visible in the photo, giving your best guess at the common pattern name (e.g. "Elk Hair Caddis", "Pheasant Tail Nymph", "Woolly Bugger") even if you're not fully certain.
 2. Reason about the aquatic and terrestrial insect hatches that are typically active on this river/region for this date, season, time of day, and weather.
-3. Recommend which of the identified flies the angler should use, ranked 1 (best) upward, with reasons grounded in the likely hatches and conditions. Reference flyName values that match entries from step 1.
-4. Note any well-known patterns for this hatch that the angler appears to be missing from their box.
+3. Recommend which of the identified flies the angler should use, ranked 1 (best) upward, with reasons grounded in the likely hatches and conditions, and a typical hook size for each. Reference flyName values that match entries from step 1.
+4. Note any well-known patterns for this hatch that the angler appears to be missing from their box, with a typical hook size for each.
 5. For every fly identified in step 1, including ones not recommended for this trip, give a short one-sentence usage note on the season, water type, time of day, or weather where that specific pattern is typically most effective on this type of river.
+6. Write a short 2-4 sentence natural-language summary for the angler.`
+    : `You are an expert fly fishing guide and aquatic entomologist. The angler has NOT provided a photo - they're starting from scratch (or want fresh ideas) and want to know what flies to buy or tie for this trip.
+
+Trip context:
+${contextLines}
+
+Tasks:
+1. Return an empty array for identifiedFlies (there's no photo to inspect).
+2. Reason about the aquatic and terrestrial insect hatches that are typically active on this river/region for this date, season, time of day, and weather.
+3. Recommend the ideal starter set of fly patterns for this trip, ranked 1 (best) upward, each with a reason grounded in the likely hatches/conditions and a typical hook size.
+4. Suggest a handful of additional well-rounded patterns worth adding beyond the top picks, each with a reason and typical hook size.
+5. Leave usageNotes empty for identifiedFlies since there are none.
 6. Write a short 2-4 sentence natural-language summary for the angler.`;
+
+  const input = [{ type: 'text', text: prompt }];
+  if (hasPhoto) {
+    input.push({ type: 'image', data: imageBase64, mime_type: mimeType });
+  }
 
   const body = {
     model: GEMINI_MODEL,
-    input: [
-      { type: 'text', text: prompt },
-      { type: 'image', data: imageBase64, mime_type: mimeType },
-    ],
+    input,
     response_format: {
       type: 'text',
       mime_type: 'application/json',
@@ -370,7 +389,7 @@ async function enrichRecommendations(recommendations, identifiedFlies) {
       return {
         ...rec,
         inBox: false,
-        sizeHint: null,
+        sizeHint: rec.sizeHint || null,
         colorNotes: null,
         referenceImageUrl: ref.imageUrl,
         referenceImageSourceUrl: ref.sourceUrl,
@@ -428,20 +447,18 @@ function computeOtherFlies(identifiedFlies, recommendations, missingPatterns) {
 app.post('/api/analyze', upload.single('image'), async (req, res) => {
   try {
     const { river, date, timeOfDay } = req.body;
-    if (!req.file) {
-      return res.status(400).json({ error: 'An image of your fly box is required.' });
-    }
     if (!river || !date || !timeOfDay) {
       return res.status(400).json({ error: 'river, date, and timeOfDay are all required.' });
     }
 
+    const hasPhoto = Boolean(req.file);
+
     const locationInfo = await geocodeLocation(river);
     const weather = await fetchWeather(locationInfo, date);
 
-    const imageBase64 = req.file.buffer.toString('base64');
     const analysis = await analyzeWithGemini({
-      imageBase64,
-      mimeType: req.file.mimetype,
+      imageBase64: hasPhoto ? req.file.buffer.toString('base64') : null,
+      mimeType: hasPhoto ? req.file.mimetype : null,
       river,
       locationInfo,
       date,
@@ -456,6 +473,7 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
     analysis.otherFlies = computeOtherFlies(analysis.identifiedFlies, analysis.recommendations, analysis.missingPatterns);
 
     res.json({
+      hasPhoto,
       locationResolved: locationInfo.resolved,
       resolvedLocationName: locationInfo.resolved ? locationInfo.name : null,
       weather,

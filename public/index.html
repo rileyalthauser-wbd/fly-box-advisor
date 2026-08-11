@@ -15,6 +15,21 @@
 
     <form id="analyze-form" class="card">
       <div class="field">
+        <label>What do you need?</label>
+        <div class="mode-toggle" role="radiogroup" aria-label="Choose mode">
+          <label class="mode-option">
+            <input type="radio" name="mode" value="analyze" checked />
+            <span>📷 Analyze my flies</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="mode" value="fill" />
+            <span>🧰 Fill my fly box</span>
+          </label>
+        </div>
+        <p class="mode-hint" id="mode-hint">Upload a photo of your fly box to see what you have and what to use.</p>
+      </div>
+
+      <div class="field" id="photo-field">
         <label for="photo">Photo of your fly box</label>
         <input type="file" id="photo" name="image" accept="image/*" required />
         <img id="photo-preview" class="photo-preview hidden" alt="Preview of selected photo" />

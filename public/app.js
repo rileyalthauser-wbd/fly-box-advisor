@@ -1,13 +1,52 @@
 const form = document.getElementById('analyze-form');
+const modeInputs = document.querySelectorAll('input[name="mode"]');
+const photoField = document.getElementById('photo-field');
 const photoInput = document.getElementById('photo');
 const photoPreview = document.getElementById('photo-preview');
+const modeHint = document.getElementById('mode-hint');
 const dateInput = document.getElementById('date');
 const submitBtn = document.getElementById('submit-btn');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 
+const MODE_COPY = {
+  analyze: {
+    hint: 'Upload a photo of your fly box to see what you have and what to use.',
+    submitLabel: 'Analyze my flies',
+    statusLabel: 'Analyzing your flies... this can take up to a minute.',
+  },
+  fill: {
+    hint: "No photo needed - we'll recommend a starter set of flies to buy or tie for this trip.",
+    submitLabel: 'Get my fly shopping list',
+    statusLabel: 'Building your fly shopping list... this can take up to a minute.',
+  },
+};
+
 // Default the date field to today.
 dateInput.value = new Date().toISOString().slice(0, 10);
+
+function getMode() {
+  const checked = document.querySelector('input[name="mode"]:checked');
+  return checked ? checked.value : 'analyze';
+}
+
+function applyMode() {
+  const mode = getMode();
+  const copy = MODE_COPY[mode] || MODE_COPY.analyze;
+  modeHint.textContent = copy.hint;
+  submitBtn.textContent = copy.submitLabel;
+
+  if (mode === 'fill') {
+    photoField.classList.add('hidden');
+    photoInput.required = false;
+  } else {
+    photoField.classList.remove('hidden');
+    photoInput.required = true;
+  }
+}
+
+modeInputs.forEach((input) => input.addEventListener('change', applyMode));
+applyMode();
 
 photoInput.addEventListener('change', () => {
   const file = photoInput.files && photoInput.files[0];
@@ -25,13 +64,19 @@ photoInput.addEventListener('change', () => {
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
-  setStatus('Analyzing your flies... this can take up to a minute.');
+  const mode = getMode();
+  const copy = MODE_COPY[mode] || MODE_COPY.analyze;
+  setStatus(copy.statusLabel);
   resultsEl.classList.add('hidden');
   resultsEl.innerHTML = '';
   submitBtn.disabled = true;
 
   try {
     const formData = new FormData(form);
+    if (mode === 'fill' && !(photoInput.files && photoInput.files[0])) {
+      formData.delete('image');
+    }
+
     const res = await fetch('/api/analyze', { method: 'POST', body: formData });
     const data = await res.json();
 
@@ -76,9 +121,15 @@ function renderResults(data) {
     resultsEl.appendChild(section);
   }
 
+  const hasPhoto = Boolean(data.hasPhoto);
+
   resultsEl.appendChild(renderFliesSection('Likely hatches', data.likelyHatches, renderHatchItem));
-  resultsEl.appendChild(renderRecommendationsSection(buildRecommendationRows(sortByRank(data.recommendations), data.missingPatterns)));
-  resultsEl.appendChild(renderFliesSection('Other flies in your box', data.otherFlies, renderFlyItem));
+  resultsEl.appendChild(
+    renderRecommendationsSection(buildRecommendationRows(sortByRank(data.recommendations), data.missingPatterns), hasPhoto)
+  );
+  if (hasPhoto) {
+    resultsEl.appendChild(renderFliesSection('Other flies in your box', data.otherFlies, renderFlyItem));
+  }
 
   resultsEl.classList.remove('hidden');
 }
@@ -178,7 +229,7 @@ function buildRecommendationRows(recommendations, missingPatterns) {
   const addRows = (Array.isArray(missingPatterns) ? missingPatterns : []).map((pattern) => ({
     flyName: pattern.name,
     reason: pattern.reason,
-    sizeHint: null,
+    sizeHint: pattern.sizeHint || null,
     inBox: false,
     rank: null,
     referenceImageUrl: pattern.referenceImageUrl,
@@ -189,7 +240,7 @@ function buildRecommendationRows(recommendations, missingPatterns) {
   return [...recRows, ...addRows];
 }
 
-function renderRecommendationsSection(recommendations) {
+function renderRecommendationsSection(recommendations, hasPhoto) {
   const section = el('section', 'results-section');
   section.appendChild(el('h2', null, 'Recommended flies'));
 
@@ -201,9 +252,13 @@ function renderRecommendationsSection(recommendations) {
   const wrapper = el('div', 'table-wrapper');
   const table = el('table', 'recommendations-table');
 
+  const columns = ['Fly', 'Description', 'Size'];
+  if (hasPhoto) columns.push('In Your Box?');
+  columns.push('Photo');
+
   const thead = el('thead');
   const headRow = el('tr');
-  ['Fly', 'Description', 'Size', 'In Your Box?', 'Photo'].forEach((label) => {
+  columns.forEach((label) => {
     headRow.appendChild(el('th', null, escapeHtml(label)));
   });
   thead.appendChild(headRow);
@@ -221,9 +276,11 @@ function renderRecommendationsSection(recommendations) {
     row.appendChild(el('td', 'reason-cell', escapeHtml(rec.reason || '-')));
     row.appendChild(el('td', null, escapeHtml(rec.sizeHint || '-')));
 
-    const inBoxCell = el('td');
-    inBoxCell.appendChild(el('span', `badge ${rec.inBox ? 'yes-badge' : 'no-badge'}`, rec.inBox ? 'Yes' : 'No'));
-    row.appendChild(inBoxCell);
+    if (hasPhoto) {
+      const inBoxCell = el('td');
+      inBoxCell.appendChild(el('span', `badge ${rec.inBox ? 'yes-badge' : 'no-badge'}`, rec.inBox ? 'Yes' : 'No'));
+      row.appendChild(inBoxCell);
+    }
 
     const photoCell = el('td');
     photoCell.appendChild(renderReferenceMedia(rec, 'small'));
