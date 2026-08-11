@@ -76,10 +76,10 @@ function renderResults(data) {
     resultsEl.appendChild(section);
   }
 
-  resultsEl.appendChild(renderWeatherSection(data));
-  resultsEl.appendChild(renderFliesSection('Likely hatches right now', data.likelyHatches, renderHatchItem));
+  resultsEl.appendChild(renderFliesSection('Likely hatches', data.likelyHatches, renderHatchItem));
   resultsEl.appendChild(renderRecommendationsSection(sortByRank(data.recommendations)));
   resultsEl.appendChild(renderFliesSection('Consider adding to your box', data.missingPatterns, renderMissingItem));
+  resultsEl.appendChild(renderIdealFlyBoxSection(sortByRank(data.recommendations), data.missingPatterns));
   resultsEl.appendChild(renderFliesSection('Other flies in your box', data.otherFlies, renderFlyItem));
 
   resultsEl.classList.remove('hidden');
@@ -88,42 +88,6 @@ function renderResults(data) {
 function sortByRank(list) {
   if (!Array.isArray(list)) return list;
   return [...list].sort((a, b) => (a.rank || 0) - (b.rank || 0));
-}
-
-function renderWeatherSection(data) {
-  const section = el('section', 'results-section');
-  section.appendChild(el('h2', null, 'Location & weather'));
-
-  if (data.resolvedLocationName) {
-    section.appendChild(el('p', 'location-note', `Resolved location: ${escapeHtml(data.resolvedLocationName)}`));
-  } else {
-    section.appendChild(el('p', 'warn-note', "Couldn't pinpoint this location on the map, so recommendations fall back on general seasonal reasoning."));
-  }
-
-  const weather = data.weather;
-  if (weather && weather.available) {
-    const grid = el('div', 'weather-grid');
-    grid.appendChild(weatherStat('High', weather.tempMaxC != null ? `${weather.tempMaxC}\u00b0C` : '-'));
-    grid.appendChild(weatherStat('Low', weather.tempMinC != null ? `${weather.tempMinC}\u00b0C` : '-'));
-    grid.appendChild(weatherStat('Precip', weather.precipitationMm != null ? `${weather.precipitationMm}mm` : '-'));
-    grid.appendChild(weatherStat('Wind', weather.windSpeedMaxKmh != null ? `${weather.windSpeedMaxKmh}km/h` : '-'));
-    grid.appendChild(weatherStat('Cloud', weather.cloudCoverPercent != null ? `${Math.round(weather.cloudCoverPercent)}%` : '-'));
-    section.appendChild(grid);
-    if (weather.note) {
-      section.appendChild(el('p', 'weather-note', escapeHtml(weather.note)));
-    }
-  } else if (weather) {
-    section.appendChild(el('p', 'warn-note', escapeHtml(weather.note || 'Weather data unavailable.')));
-  }
-
-  return section;
-}
-
-function weatherStat(label, value) {
-  const stat = el('div', 'weather-stat');
-  stat.appendChild(el('div', 'value', escapeHtml(String(value))));
-  stat.appendChild(el('div', 'label', escapeHtml(label)));
-  return stat;
 }
 
 function renderFliesSection(title, items, itemRenderer) {
@@ -186,12 +150,17 @@ function renderFlyItem(fly) {
 }
 
 function renderHatchItem(hatch) {
-  const li = el('li', 'item-card');
+  const li = el('li', 'item-card fly-item-card');
+  li.appendChild(renderReferenceMedia({ name: hatch.insect, ...hatch }));
+
+  const body = el('div', 'fly-item-body');
   const title = el('div', 'item-title');
   title.appendChild(el('span', null, escapeHtml(hatch.insect || 'Unknown insect')));
   if (hatch.lifecycleStage) title.appendChild(el('span', 'badge', escapeHtml(hatch.lifecycleStage)));
-  li.appendChild(title);
-  if (hatch.reason) li.appendChild(el('div', 'item-reason', escapeHtml(hatch.reason)));
+  body.appendChild(title);
+  if (hatch.reason) body.appendChild(el('div', 'item-reason', escapeHtml(hatch.reason)));
+  li.appendChild(body);
+
   return li;
 }
 
@@ -205,6 +174,72 @@ function renderMissingItem(pattern) {
   li.appendChild(body);
 
   return li;
+}
+
+function renderIdealFlyBoxSection(recommendations, missingPatterns) {
+  const section = el('section', 'results-section');
+  section.appendChild(el('h2', null, 'The ideal fly box'));
+
+  const items = [
+    ...(Array.isArray(recommendations)
+      ? recommendations.map((rec) => ({
+          name: rec.flyName,
+          referenceImageUrl: rec.referenceImageUrl,
+          referenceImageSourceUrl: rec.referenceImageSourceUrl,
+          referenceImageSearchUrl: rec.referenceImageSearchUrl,
+          tag: 'have',
+        }))
+      : []),
+    ...(Array.isArray(missingPatterns)
+      ? missingPatterns.map((pattern) => ({
+          name: pattern.name,
+          referenceImageUrl: pattern.referenceImageUrl,
+          referenceImageSourceUrl: pattern.referenceImageSourceUrl,
+          referenceImageSearchUrl: pattern.referenceImageSearchUrl,
+          tag: 'add',
+        }))
+      : []),
+  ];
+
+  if (items.length === 0) {
+    section.appendChild(el('p', 'weather-note', 'Nothing to show here.'));
+    return section;
+  }
+
+  const box = el('div', 'fly-box-illustration');
+  const lid = el('div', 'fly-box-lid');
+  lid.appendChild(el('span', 'fly-box-latch'));
+  box.appendChild(lid);
+
+  const slots = el('div', 'fly-box-slots');
+  items.forEach((item) => slots.appendChild(renderFlyBoxSlot(item)));
+  box.appendChild(slots);
+
+  section.appendChild(box);
+  return section;
+}
+
+function renderFlyBoxSlot(item) {
+  const slot = el('div', 'fly-box-slot');
+
+  const media = el('div', 'fly-box-slot-media');
+  if (item.referenceImageUrl) {
+    const img = el('img', 'fly-reference-img');
+    img.src = item.referenceImageUrl;
+    img.alt = escapeHtml(item.name || 'fly');
+    img.loading = 'lazy';
+    media.appendChild(img);
+  } else {
+    media.appendChild(el('span', 'fly-box-slot-icon', '\ud83e\udeb0'));
+  }
+  slot.appendChild(media);
+
+  slot.appendChild(el('div', 'fly-box-slot-label', escapeHtml(item.name || 'Unknown fly')));
+  slot.appendChild(
+    el('span', `badge fly-box-slot-badge ${item.tag === 'add' ? 'no-badge' : 'yes-badge'}`, item.tag === 'add' ? 'Add' : 'Have')
+  );
+
+  return slot;
 }
 
 function renderRecommendationsSection(recommendations) {

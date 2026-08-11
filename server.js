@@ -390,6 +390,21 @@ async function enrichMissingPatterns(missingPatterns) {
   );
 }
 
+async function enrichHatches(likelyHatches) {
+  if (!Array.isArray(likelyHatches)) return likelyHatches;
+  return Promise.all(
+    likelyHatches.map(async (hatch) => {
+      const ref = await fetchReferenceImage(hatch.insect);
+      return {
+        ...hatch,
+        referenceImageUrl: ref.imageUrl,
+        referenceImageSourceUrl: ref.sourceUrl,
+        referenceImageSearchUrl: ref.searchUrl,
+      };
+    })
+  );
+}
+
 // Flies the angler owns that weren't specifically called out as a top
 // recommendation or a suggested addition - shown at the bottom as "other".
 function computeOtherFlies(identifiedFlies, recommendations, missingPatterns) {
@@ -432,6 +447,7 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
     analysis.identifiedFlies = await attachReferenceImages(analysis.identifiedFlies);
     analysis.recommendations = await enrichRecommendations(analysis.recommendations, analysis.identifiedFlies);
     analysis.missingPatterns = await enrichMissingPatterns(analysis.missingPatterns);
+    analysis.likelyHatches = await enrichHatches(analysis.likelyHatches);
     analysis.otherFlies = computeOtherFlies(analysis.identifiedFlies, analysis.recommendations, analysis.missingPatterns);
 
     res.json({
