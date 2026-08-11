@@ -19,11 +19,14 @@
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: var(--bg);
+  background: linear-gradient(180deg, #dceef2 0%, #d7ecdf 45%, var(--bg) 100%);
   color: var(--text);
+  min-height: 100vh;
 }
 
 .page {
+  position: relative;
+  z-index: 1;
   max-width: 720px;
   margin: 0 auto;
   padding: 24px 16px 64px;
@@ -386,4 +389,128 @@ ul.item-list {
   margin: 8px 0 0;
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+.fish-tank {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.trout-wrap {
+  position: absolute;
+  will-change: transform;
+}
+
+.trout {
+  display: block;
+  height: auto;
+}
+
+.trout-body {
+  fill: #8a9b5e;
+}
+
+.trout-tail {
+  fill: #75885099;
+}
+
+.trout-spot {
+  fill: #4d5a34;
+}
+
+.trout-eye {
+  fill: #24301d;
+}
+
+.trout-rainbow .trout-body {
+  fill: #8fa3ad;
+}
+
+.trout-rainbow .trout-tail {
+  fill: #7690999a;
+}
+
+.trout-rainbow .trout-spot {
+  fill: #3c4c52;
+}
+
+.trout-flip {
+  transform: scaleX(-1);
+}
+
+.trout-wrap-1 {
+  top: 10%;
+  left: -120px;
+  width: 62px;
+  opacity: 0.4;
+  animation: swim-right 28s linear infinite;
+}
+
+.trout-wrap-2 {
+  top: 22%;
+  right: -120px;
+  width: 44px;
+  opacity: 0.35;
+  animation: swim-left 34s linear infinite;
+  animation-delay: -6s;
+}
+
+.trout-wrap-3 {
+  top: 48%;
+  left: -120px;
+  width: 54px;
+  opacity: 0.3;
+  animation: swim-right 40s linear infinite;
+  animation-delay: -18s;
+}
+
+.trout-wrap-4 {
+  top: 68%;
+  right: -120px;
+  width: 40px;
+  opacity: 0.35;
+  animation: swim-left 24s linear infinite;
+  animation-delay: -10s;
+}
+
+.trout-wrap-5 {
+  top: 85%;
+  left: -120px;
+  width: 58px;
+  opacity: 0.3;
+  animation: swim-right 32s linear infinite;
+  animation-delay: -22s;
+}
+
+@keyframes swim-right {
+  0% {
+    transform: translateX(0) translateY(0);
+  }
+  50% {
+    transform: translateX(calc(50vw + 60px)) translateY(-16px);
+  }
+  100% {
+    transform: translateX(calc(100vw + 240px)) translateY(0);
+  }
+}
+
+@keyframes swim-left {
+  0% {
+    transform: translateX(0) translateY(0);
+  }
+  50% {
+    transform: translateX(calc(-50vw - 60px)) translateY(14px);
+  }
+  100% {
+    transform: translateX(calc(-100vw - 240px)) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trout-wrap {
+    animation: none !important;
+  }
 }
