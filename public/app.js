@@ -77,10 +77,10 @@ function renderResults(data) {
   }
 
   resultsEl.appendChild(renderWeatherSection(data));
-  resultsEl.appendChild(renderFliesSection('Flies in your box', data.identifiedFlies, renderFlyItem));
   resultsEl.appendChild(renderFliesSection('Likely hatches right now', data.likelyHatches, renderHatchItem));
-  resultsEl.appendChild(renderFliesSection('Recommended flies', sortByRank(data.recommendations), renderRecommendationItem));
+  resultsEl.appendChild(renderRecommendationsSection(sortByRank(data.recommendations)));
   resultsEl.appendChild(renderFliesSection('Consider adding to your box', data.missingPatterns, renderMissingItem));
+  resultsEl.appendChild(renderFliesSection('Other flies in your box', data.otherFlies, renderFlyItem));
 
   resultsEl.classList.remove('hidden');
 }
@@ -141,29 +141,33 @@ function renderFliesSection(title, items, itemRenderer) {
   return section;
 }
 
-function renderFlyItem(fly) {
-  const li = el('li', 'item-card fly-item-card');
-
-  const media = el('div', 'fly-item-media');
-  if (fly.referenceImageUrl) {
+function renderReferenceMedia(item, size) {
+  const media = el('div', `fly-item-media${size === 'small' ? ' fly-item-media-sm' : ''}`);
+  if (item.referenceImageUrl) {
     const link = el('a', null);
-    link.href = fly.referenceImageSourceUrl || fly.referenceImageUrl;
+    link.href = item.referenceImageSourceUrl || item.referenceImageUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     const img = el('img', 'fly-reference-img');
-    img.src = fly.referenceImageUrl;
-    img.alt = `Reference photo of ${fly.name || 'fly'}`;
+    img.src = item.referenceImageUrl;
+    img.alt = `Reference photo of ${item.name || item.flyName || 'fly'}`;
     img.loading = 'lazy';
     link.appendChild(img);
     media.appendChild(link);
-  } else if (fly.referenceImageSearchUrl) {
-    const link = el('a', 'reference-search-link', '\ud83d\udd0d Search photos');
-    link.href = fly.referenceImageSearchUrl;
+  } else if (item.referenceImageSearchUrl) {
+    const link = el('a', 'reference-search-link', '\ud83d\udd0d');
+    link.href = item.referenceImageSearchUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
+    link.title = 'Search reference photos';
     media.appendChild(link);
   }
-  li.appendChild(media);
+  return media;
+}
+
+function renderFlyItem(fly) {
+  const li = el('li', 'item-card fly-item-card');
+  li.appendChild(renderReferenceMedia(fly));
 
   const body = el('div', 'fly-item-body');
   const title = el('div', 'item-title');
@@ -191,21 +195,65 @@ function renderHatchItem(hatch) {
   return li;
 }
 
-function renderRecommendationItem(rec) {
-  const li = el('li', 'item-card');
-  const title = el('div', 'item-title');
-  title.appendChild(el('span', null, escapeHtml(rec.flyName || 'Unknown fly')));
-  if (rec.rank) title.appendChild(el('span', 'badge rank-badge', `#${rec.rank}`));
-  li.appendChild(title);
-  if (rec.reason) li.appendChild(el('div', 'item-reason', escapeHtml(rec.reason)));
+function renderMissingItem(pattern) {
+  const li = el('li', 'item-card fly-item-card');
+  li.appendChild(renderReferenceMedia(pattern));
+
+  const body = el('div', 'fly-item-body');
+  body.appendChild(el('div', 'item-title', escapeHtml(pattern.name || 'Unknown pattern')));
+  if (pattern.reason) body.appendChild(el('div', 'item-reason', escapeHtml(pattern.reason)));
+  li.appendChild(body);
+
   return li;
 }
 
-function renderMissingItem(pattern) {
-  const li = el('li', 'item-card');
-  li.appendChild(el('div', 'item-title', escapeHtml(pattern.name || 'Unknown pattern')));
-  if (pattern.reason) li.appendChild(el('div', 'item-reason', escapeHtml(pattern.reason)));
-  return li;
+function renderRecommendationsSection(recommendations) {
+  const section = el('section', 'results-section');
+  section.appendChild(el('h2', null, 'Recommended flies'));
+
+  if (!Array.isArray(recommendations) || recommendations.length === 0) {
+    section.appendChild(el('p', 'weather-note', 'Nothing to show here.'));
+    return section;
+  }
+
+  const wrapper = el('div', 'table-wrapper');
+  const table = el('table', 'recommendations-table');
+
+  const thead = el('thead');
+  const headRow = el('tr');
+  ['Fly', 'Description', 'Size', 'In Your Box?', 'Photo'].forEach((label) => {
+    headRow.appendChild(el('th', null, escapeHtml(label)));
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = el('tbody');
+  recommendations.forEach((rec) => {
+    const row = el('tr');
+
+    const nameCell = el('td');
+    nameCell.appendChild(el('span', null, escapeHtml(rec.flyName || 'Unknown fly')));
+    if (rec.rank) nameCell.appendChild(el('span', 'badge rank-badge table-rank-badge', `#${rec.rank}`));
+    row.appendChild(nameCell);
+
+    row.appendChild(el('td', 'reason-cell', escapeHtml(rec.reason || '-')));
+    row.appendChild(el('td', null, escapeHtml(rec.sizeHint || '-')));
+
+    const inBoxCell = el('td');
+    inBoxCell.appendChild(el('span', `badge ${rec.inBox ? 'yes-badge' : 'no-badge'}`, rec.inBox ? 'Yes' : 'No'));
+    row.appendChild(inBoxCell);
+
+    const photoCell = el('td');
+    photoCell.appendChild(renderReferenceMedia(rec, 'small'));
+    row.appendChild(photoCell);
+
+    tbody.appendChild(row);
+  });
+  table.appendChild(tbody);
+
+  wrapper.appendChild(table);
+  section.appendChild(wrapper);
+  return section;
 }
 
 function escapeHtml(str) {

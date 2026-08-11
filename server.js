@@ -327,6 +327,82 @@ async function attachReferenceImages(identifiedFlies) {
   return withImages;
 }
 
+// Fuzzy name matching so "Elk Hair Caddis" (from recommendations) lines up
+// with "Elk hair caddis, size 14" (as identified from the photo) etc.
+function normalizeFlyName(name) {
+  return (name || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function namesMatch(a, b) {
+  const na = normalizeFlyName(a);
+  const nb = normalizeFlyName(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+function findMatchingFly(name, flies) {
+  if (!Array.isArray(flies)) return null;
+  return flies.find((f) => namesMatch(f.name, name)) || null;
+}
+
+async function enrichRecommendations(recommendations, identifiedFlies) {
+  if (!Array.isArray(recommendations)) return recommendations;
+  return Promise.all(
+    recommendations.map(async (rec) => {
+      const matched = findMatchingFly(rec.flyName, identifiedFlies);
+      if (matched) {
+        return {
+          ...rec,
+          inBox: true,
+          sizeHint: matched.sizeHint || null,
+          colorNotes: matched.colorNotes || null,
+          referenceImageUrl: matched.referenceImageUrl || null,
+          referenceImageSourceUrl: matched.referenceImageSourceUrl || null,
+          referenceImageSearchUrl: matched.referenceImageSearchUrl || null,
+        };
+      }
+      const ref = await fetchReferenceImage(rec.flyName);
+      return {
+        ...rec,
+        inBox: false,
+        sizeHint: null,
+        colorNotes: null,
+        referenceImageUrl: ref.imageUrl,
+        referenceImageSourceUrl: ref.sourceUrl,
+        referenceImageSearchUrl: ref.searchUrl,
+      };
+    })
+  );
+}
+
+async function enrichMissingPatterns(missingPatterns) {
+  if (!Array.isArray(missingPatterns)) return missingPatterns;
+  return Promise.all(
+    missingPatterns.map(async (pattern) => {
+      const ref = await fetchReferenceImage(pattern.name);
+      return {
+        ...pattern,
+        referenceImageUrl: ref.imageUrl,
+        referenceImageSourceUrl: ref.sourceUrl,
+        referenceImageSearchUrl: ref.searchUrl,
+      };
+    })
+  );
+}
+
+// Flies the angler owns that weren't specifically called out as a top
+// recommendation or a suggested addition - shown at the bottom as "other".
+function computeOtherFlies(identifiedFlies, recommendations, missingPatterns) {
+  if (!Array.isArray(identifiedFlies)) return [];
+  const recommendedNames = (recommendations || []).map((r) => r.flyName);
+  const missingNames = (missingPatterns || []).map((m) => m.name);
+  return identifiedFlies.filter((fly) => {
+    const inRecommended = recommendedNames.some((n) => namesMatch(fly.name, n));
+    const inMissing = missingNames.some((n) => namesMatch(fly.name, n));
+    return !inRecommended && !inMissing;
+  });
+}
+
 // ---- Routes -----------------------------------------------------------------
 
 app.post('/api/analyze', upload.single('image'), async (req, res) => {
@@ -354,6 +430,9 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
     });
 
     analysis.identifiedFlies = await attachReferenceImages(analysis.identifiedFlies);
+    analysis.recommendations = await enrichRecommendations(analysis.recommendations, analysis.identifiedFlies);
+    analysis.missingPatterns = await enrichMissingPatterns(analysis.missingPatterns);
+    analysis.otherFlies = computeOtherFlies(analysis.identifiedFlies, analysis.recommendations, analysis.missingPatterns);
 
     res.json({
       locationResolved: locationInfo.resolved,

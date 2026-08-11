@@ -286,3 +286,61 @@ ul.item-list {
 .rank-badge {
   background: var(--accent-dark);
 }
+
+.table-wrapper {
+  overflow-x: auto;
+  margin-top: 4px;
+}
+
+.recommendations-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.recommendations-table th,
+.recommendations-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.recommendations-table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.recommendations-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.recommendations-table .reason-cell {
+  min-width: 220px;
+  line-height: 1.4;
+}
+
+.table-rank-badge {
+  margin-left: 8px;
+}
+
+.yes-badge {
+  background: var(--accent);
+}
+
+.no-badge {
+  background: var(--muted);
+}
+
+.fly-item-media-sm {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+}
+
+.recommendations-table .fly-item-media {
+  margin: 0;
+}
